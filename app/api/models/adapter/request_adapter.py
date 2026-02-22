@@ -248,40 +248,66 @@ class MessageAdapter:
     
     @staticmethod
     def to_generic(messages: List[ChatCompletionMessageParam]) -> list[oci_models.Message]:
-        """
-        Convert OpenAI message to OCI Generic message.
-        """
-        new_msg_list = []
-        for msg in messages:
-            content = None
-            if msg.get("content"):
-                content = MessageAdapter.ContentAdapter.to_generic_content(msg["content"])
-            # DeveloperMessage
-            if msg["role"] == "developer":
-                new_msg = oci_models.DeveloperMessage(content = content)
-            # SystemMessage
-            elif msg["role"] == "system":
-                new_msg = oci_models.SystemMessage(content = content)
-            # UserMessage
-            elif msg["role"] == "user":
-                new_msg = oci_models.UserMessage(content = content)
-            # AssistantMessage
-            elif msg["role"] == "assistant":
-                new_msg = oci_models.AssistantMessage()
-                if msg.get("tool_calls"):
-                    new_msg.tool_calls = ToolAdapter.ToolCallAdapter.to_generic(msg["tool_calls"])
-                elif content:
-                    new_msg.content = content
-            # ToolMessage
-            elif msg["role"] == "tool":
-                new_msg = ToolAdapter.ToolResultAdapter.to_generic(content, msg.get("tool_call_id"))
-            # ChatCompletionFunctionMessageParam Deprecated and replaced by `tool_calls`.
+    """
+    Convert OpenAI message to OCI Generic message.
+    - Avoid sending content=None to OCI (OCI rejects null content).
+    - Preserve tool_calls on assistant messages without setting content.
+    """
+    new_msg_list: list[oci_models.Message] = []
+
+    for msg in messages:
+        role = msg.get("role")
+
+        # Convert content ONLY when the key exists and is not None.
+        # (empty string "" is valid and should be converted)
+        content = None
+        if "content" in msg and msg["content"] is not None:
+            content = MessageAdapter.ContentAdapter.to_generic_content(msg["content"])
+
+        # Developer/System/User: OCI doesn't accept content=null → skip if content is None
+        if role == "developer":
+            if content is None:
+                continue
+            new_msg = oci_models.DeveloperMessage(content=content)
+
+        elif role == "system":
+            if content is None:
+                continue
+            new_msg = oci_models.SystemMessage(content=content)
+
+        elif role == "user":
+            if content is None:
+                continue
+            new_msg = oci_models.UserMessage(content=content)
+
+        # Assistant: allow tool_calls with no content; otherwise require content
+        elif role == "assistant":
+            new_msg = oci_models.AssistantMessage()
+
+            if msg.get("tool_calls"):
+                new_msg.tool_calls = ToolAdapter.ToolCallAdapter.to_generic(msg["tool_calls"])
+                # DO NOT set new_msg.content at all in this branch
+            elif content is not None:
+                new_msg.content = content
             else:
-                new_msg = None
-                raise ValueError("Unknown message type:"+str(msg))
-            if new_msg:
-                new_msg_list.append(new_msg)
-        return new_msg_list
+                # assistant with neither tool_calls nor content → drop
+                continue
+
+        # Tool: tool result with null content is invalid → drop
+        elif role == "tool":
+            if content is None:
+                continue
+            new_msg = ToolAdapter.ToolResultAdapter.to_generic(content, msg.get("tool_call_id"))
+            if not new_msg:
+                continue
+
+        else:
+            raise ValueError("Unknown message type:" + str(msg))
+
+        if new_msg:
+            new_msg_list.append(new_msg)
+
+    return new_msg_list
 
     @staticmethod
     def to_cohere(messages: List[ChatCompletionMessageParam])-> list[oci_models.CohereMessage]:
