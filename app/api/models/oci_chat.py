@@ -145,12 +145,12 @@ class OCIGenAIModel(BaseChatModel):
 
         # use openai compatitble API
         if self.provider in self.compatitble_providers:
-            self._log_chat("OCI Generative AI request",chat_request.model_dump())
+            self._log_chat("OCI Generative AI request",chat_request.model_dump(mode='json'))
             http_client_headers = self._build_headers(compartment_id = OCI_COMPARTMENT)
             response = requests.post(
                 url = INFERENCE_ENDPOINT_TEMPLATE_OPENAI.replace("{region}", self.region),
                 auth=CLIENT_KWARGS["signer"],
-                data= json.dumps(chat_request.model_dump()),
+                data= json.dumps(chat_request.model_dump(mode='json')),
                 headers=http_client_headers
             )
             return response
